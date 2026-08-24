@@ -227,11 +227,11 @@ function Generator() {
   </section>;
 }
 
-type Sample = { id: string; source: string };
-const SAMPLES: Sample[] = Array.from({ length: 25 }, (_, index) => ({
-  id: String(index + 2).padStart(2, '0'),
-  source: '/corpus-preview/D4-' + String(index + 1).padStart(3, '0') + '.webp',
-}));
+type Sample = { id: string; source: string; fallback?: string; label: string };
+const FALLBACK_SAMPLES: Sample[] = [
+  { id: 'local-002', source: '/samples/kolam_color_002.jpg', label: 'reference image 02' },
+  { id: 'local-003', source: '/samples/kolam_color_003.jpg', label: 'reference image 03' },
+];
 
 function formatRatio(value?: number) { return value === undefined ? '—' : (value * 100).toFixed(1) + '%'; }
 function AnalysisLedger({ result }: { result?: AnalysisData }) {
@@ -242,7 +242,8 @@ function AnalysisLedger({ result }: { result?: AnalysisData }) {
 
 function Analyser() {
   const [jobId, setJobId] = useState<string>();
-  const [selectedSample, setSelectedSample] = useState<Sample>(SAMPLES[0]);
+  const [samples, setSamples] = useState<Sample[]>(FALLBACK_SAMPLES);
+  const [selectedSample, setSelectedSample] = useState<Sample | undefined>(FALLBACK_SAMPLES[0]);
   const [sourcePreview, setSourcePreview] = useState<string>();
   const [blend, setBlend] = useState(0);
   const [lensMode, setLensMode] = useState<'source' | 'reconstruction' | 'diagnostic'>('source');
@@ -254,6 +255,22 @@ function Analyser() {
   const activeRecon = result ? absoluteApiUrl(result.assets?.reconstruction) : undefined;
   const activeDiagnostic = result ? absoluteApiUrl(result.assets?.diagnostic) : undefined;
   const inspectedAsset = lensMode === 'source' ? activeSource : lensMode === 'reconstruction' ? activeRecon : activeDiagnostic;
+  useEffect(() => {
+    let live = true;
+    fetch(API + '/api/corpus?limit=80').then((response) => response.ok ? response.json() : undefined).then((payload) => {
+      if (!live || !payload?.records) return;
+      const references = payload.records
+        .filter((record: { id?: string; label?: string; status?: string; views?: { source?: string; reconstruction?: string } }) => record.id && record.views?.source && record.views?.reconstruction)
+        .sort((left: { status?: string }, right: { status?: string }) => Number(right.status === 'auto_pass') - Number(left.status === 'auto_pass'))
+        .slice(0, 25)
+        .map((record: { id: string; label?: string; views: { source: string; reconstruction: string } }) => ({ id: record.id, source: absoluteApiUrl(record.views.source)!, fallback: absoluteApiUrl(record.views.reconstruction), label: record.label ?? 'corpus reference' }));
+      if (references.length) {
+        setSamples(references);
+        setSelectedSample(references[0]);
+      }
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, []);
   useEffect(() => () => { if (sourcePreview?.startsWith('blob:')) URL.revokeObjectURL(sourcePreview); }, [sourcePreview]);
   const startAnalysis = async (file?: File, preview?: string) => {
     if (!file) return;
@@ -273,10 +290,11 @@ function Analyser() {
     setSelectedSample(sample);
     setJobId(undefined);
     try {
-      const response = await fetch(sample.source);
+      let response = await fetch(sample.source);
+      if (!response.ok && sample.fallback) response = await fetch(sample.fallback);
       if (!response.ok) throw new Error('The selected image could not be loaded.');
       const blob = await response.blob();
-      await startAnalysis(new File([blob], 'reference-' + sample.id + '.webp', { type: blob.type || 'image/webp' }), sample.source);
+      await startAnalysis(new File([blob], 'reference-' + sample.id + '.webp', { type: blob.type || 'image/webp' }), response.url || sample.source);
     } catch (error) { window.alert('Sample could not be analysed: ' + (error instanceof Error ? error.message : 'unknown error')); }
   };
   const onInput = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (file) void startAnalysis(file, URL.createObjectURL(file)); };
@@ -308,7 +326,7 @@ function Analyser() {
     <aside className="analysis-tools">
       <div className="tool-heading"><span>reconstructor</span><strong>input image</strong></div>
       <label className="upload-target" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><strong>drop or choose an image</strong><span>PNG, JPEG, or WebP</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={onInput} /></label>
-      <div className="study-rack sample-carousel"><div><span>reference gallery</span></div><div className="study-list">{SAMPLES.map((sample) => <button key={sample.id} className={selectedSample.id === sample.id && isAnalysing ? 'selected' : ''} onClick={() => void startSampleAnalysis(sample)} aria-label={'Analyse reference image ' + sample.id}><img src={sample.source} alt="" /></button>)}</div></div>
+      <div className="study-rack sample-carousel"><div><span>reference gallery</span></div><div className="study-list">{samples.map((sample) => <button key={sample.id} className={selectedSample?.id === sample.id && isAnalysing ? 'selected' : ''} onClick={() => void startSampleAnalysis(sample)} aria-label={'Analyse ' + sample.label}><img src={sample.source} alt="" onError={(event) => { if (sample.fallback && event.currentTarget.src !== sample.fallback) event.currentTarget.src = sample.fallback; }} /></button>)}</div></div>
       <label className="blend-control"><span>comparison divider</span><div className="scrub-rail"><i>original</i><input aria-label="Original to reconstruction scan slider" type="range" min="0" max="100" value={blend} onChange={(event) => setBlend(Number(event.target.value))} /><i>reconstruction</i></div></label>
       <AnalysisLedger result={result} />
       <JobStatus job={job} onCancel={cancel} />
