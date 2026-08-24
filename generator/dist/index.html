@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Kolam Generator</title>
+
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+
+        display: flex;
+        gap: 30px;
+
+        justify-content: center;
+        align-items: center;
+
+        background: #f3f3f3;
+        font-family: Arial, sans-serif;
+      }
+
+      /* ======================================================
+         Controls
+         ====================================================== */
+
+      .controls {
+        width: 260px;
+
+        padding: 24px;
+
+        background: white;
+        border: 1px solid #ddd;
+        border-radius: 12px;
+
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+      }
+
+      h1 {
+        margin-top: 0;
+        font-size: 22px;
+      }
+
+      .field {
+        margin-bottom: 16px;
+      }
+
+      label {
+        display: block;
+
+        margin-bottom: 6px;
+
+        font-size: 14px;
+        font-weight: bold;
+      }
+
+      input,
+      select {
+        width: 100%;
+
+        padding: 9px;
+
+        border: 1px solid #ccc;
+        border-radius: 6px;
+
+        font-size: 14px;
+      }
+
+      button {
+        width: 100%;
+
+        padding: 10px;
+
+        border: none;
+        border-radius: 6px;
+
+        background: #111;
+        color: white;
+
+        font-size: 14px;
+        font-weight: bold;
+
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #333;
+      }
+
+      /* ======================================================
+         Debug Toggle
+         ====================================================== */
+
+      .debug-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        margin-bottom: 16px;
+      }
+
+      .debug-toggle input {
+        width: auto;
+        margin: 0;
+
+        cursor: pointer;
+      }
+
+      .debug-toggle label {
+        margin: 0;
+
+        font-size: 14px;
+        font-weight: bold;
+
+        cursor: pointer;
+      }
+
+      /* ======================================================
+         Status
+         ====================================================== */
+
+      .info {
+        margin-top: 15px;
+
+        font-size: 13px;
+        line-height: 1.5;
+
+        color: #555;
+      }
+
+      /* ======================================================
+         Canvas
+         ====================================================== */
+
+      canvas {
+        background: white;
+
+        border: 1px solid #ccc;
+        border-radius: 8px;
+      }
+
+      /* ======================================================
+         Tile Debug Tooltip
+         ====================================================== */
+
+      .tile-debug {
+        position: fixed;
+
+        display: none;
+
+        padding: 10px 12px;
+
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+
+        border-radius: 6px;
+
+        font-family: monospace;
+        font-size: 12px;
+        line-height: 1.5;
+
+        pointer-events: none;
+
+        z-index: 1000;
+
+        white-space: nowrap;
+
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      }
+
+      .tile-debug strong {
+        font-size: 13px;
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-ZWUS-F3q.js"></script>
+  </head>
+
+  <body>
+    <!-- ====================================================
+         Controls
+         ==================================================== -->
+
+    <div class="controls">
+      <h1>Kolam Generator</h1>
+
+      <!-- Grid Width -->
+
+      <div class="field">
+        <label for="gridWidth"> Grid Width </label>
+
+        <input id="gridWidth" type="number" value="9" min="1" max="25" />
+      </div>
+
+      <!-- Grid Height -->
+
+      <div class="field">
+        <label for="gridHeight"> Grid Height </label>
+
+        <input id="gridHeight" type="number" value="9" min="1" max="25" />
+      </div>
+
+      <!-- Number of Dots -->
+
+      <div class="field">
+        <label for="dots"> Number of Dots </label>
+
+        <input id="dots" type="number" value="25" min="1" />
+      </div>
+
+      <!-- Number of Islands -->
+
+      <div class="field">
+        <label for="islands"> Number of Islands </label>
+
+        <input id="islands" type="number" value="1" min="1" />
+      </div>
+
+      <!-- Symmetry -->
+
+      <div class="field">
+        <label for="symmetry"> Symmetry </label>
+
+        <select id="symmetry">
+          <option value="None">None</option>
+          <option value="Mirror_V">Mirror Vertical</option>
+          <option value="Mirror_H">Mirror Horizontal</option>
+          <option value="Mirror_Diagonal1">Mirror Diagonal (\)</option>
+          <option value="Mirror_Diagonal2">Mirror Diagonal (/)</option>
+          <option value="Rotational_1Fold">Rotational 1-Fold</option>
+          <option value="Rotational_2Fold">Rotational 2-Fold</option>
+          <option value="Rotational_4Fold" selected>Rotational 4-Fold</option>
+        </select>
+      </div>
+
+      <!-- Colors -->
+
+      <div class="field">
+        <label for="bgColor"> Background </label>
+
+        <input id="bgColor" type="color" value="#ffffff" />
+      </div>
+
+      <div class="field">
+        <label for="dotColor"> Dots </label>
+
+        <input id="dotColor" type="color" value="#000000" />
+      </div>
+
+      <div class="field">
+        <label for="strokeColor"> Stroke </label>
+
+        <input id="strokeColor" type="color" value="#000000" />
+      </div>
+
+      <!-- Debug -->
+
+      <div class="debug-toggle">
+        <input id="showPseudoPoints" type="checkbox" />
+
+        <label for="showPseudoPoints"> Debug Tile Geometry </label>
+      </div>
+
+      <button id="generate">Generate Kolam</button>
+
+      <!-- Export Actions -->
+
+      <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+        <button id="downloadPng" disabled style="background: #2b6cb0;">Download PNG</button>
+        <button id="saveJson" disabled style="background: #2b6cb0;">Save JSON</button>
+        <button id="loadJson" style="background: #4a5568;">Load JSON</button>
+        <input id="loadJsonInput" type="file" accept=".json" style="display: none;" />
+      </div>
+
+      <!-- Status -->
+
+      <div id="status" class="info">Ready.</div>
+    </div>
+
+    <!-- ====================================================
+         Canvas
+         ==================================================== -->
+
+    <canvas id="kolamCanvas" width="800" height="800"></canvas>
+
+    <!-- ====================================================
+         Debug Tooltip
+         ==================================================== -->
+
+    <div id="tileDebug" class="tile-debug"></div>
+
+    <!-- ====================================================
+         Application
+         ==================================================== -->
+
+  </body>
+</html>
