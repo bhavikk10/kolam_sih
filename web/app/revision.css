@@ -265,3 +265,28 @@
   .field-cursor { display:none; }
   .sequence-path,.sequence-dot { transition:none; }
 }
+
+/* Both reconstructions remain inspectable; the displayed result is the
+   source-similarity selection, never an undisclosed fallback. */
+.analysis-selection { display:grid;grid-template-columns:1fr auto;gap:3px 10px;padding:9px;border:1px solid rgb(213 168 117 / .28);background:linear-gradient(90deg,rgb(213 168 117 / .08),transparent); }
+.analysis-selection>span { color:var(--gold);font:7px var(--mono);letter-spacing:.1em;text-transform:uppercase; }
+.analysis-selection>strong { color:var(--paper);font:400 12px var(--serif);text-align:right; }
+.analysis-selection>small { grid-column:1 / -1;color:var(--muted);font:7px/1.4 var(--mono); }
+.analysis-selection>div { grid-column:1 / -1;display:grid;grid-template-columns:1fr 1fr;gap:5px;padding-top:5px;border-top:1px solid var(--hair); }
+.analysis-selection b { display:flex;justify-content:space-between;color:#bda797;font:8px var(--mono);font-weight:400;text-transform:uppercase; }
+.analysis-selection i { color:var(--paper);font-style:normal; }
+.source-assessment { display:grid;gap:9px;padding-top:12px;border-top:1px solid var(--hair-bright); }
+.source-assessment header { display:flex;justify-content:space-between;gap:10px;align-items:baseline; }
+.source-assessment header span { color:var(--gold);font:8px var(--mono);letter-spacing:.13em;text-transform:uppercase; }
+.source-assessment header strong { color:var(--chalk);font:400 13px var(--serif); }
+.symmetry-profile { display:grid;gap:7px;padding:10px 0 9px;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair); }
+.symmetry-row { display:grid;grid-template-columns:94px minmax(0,1fr) 39px;gap:8px;align-items:center; }
+.symmetry-row>span { color:#bda797;font:8px var(--mono);letter-spacing:.035em;text-transform:uppercase; }
+.symmetry-row>i { display:block;overflow:hidden;height:2px;background:rgb(243 230 204 / .13); }
+.symmetry-row>i>b { display:block;width:var(--symmetry-score);height:100%;background:linear-gradient(90deg,#a66f45,var(--gold));box-shadow:0 0 7px rgb(217 171 103 / .22); }
+.symmetry-row>strong { color:var(--paper);font:400 9px var(--mono);text-align:right; }
+.source-assessment-grid { display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--hair);border:1px solid var(--hair); }
+.source-assessment-grid>div { display:grid;gap:3px;min-width:0;padding:8px;background:rgb(21 10 8 / .7); }
+.source-assessment-grid small { color:#806b62;font:8px var(--mono);letter-spacing:.06em;text-transform:uppercase; }
+.source-assessment-grid b { overflow:hidden;color:var(--chalk);font:10px var(--mono);font-weight:400;text-overflow:ellipsis;white-space:nowrap; }
+.source-assessment-grid em { overflow:hidden;color:var(--muted);font:8px/1.3 var(--mono);font-style:normal;text-overflow:ellipsis;white-space:nowrap; }

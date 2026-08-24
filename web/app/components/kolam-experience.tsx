@@ -16,8 +16,11 @@ type View = 'home' | 'generate' | 'analyse' | 'corpus' | 'pipeline';
 type GeneratorSymmetry = 'None' | 'Mirror_V' | 'Mirror_H' | 'Mirror_Diagonal1' | 'Mirror_Diagonal2' | 'Rotational_1Fold' | 'Rotational_2Fold' | 'Rotational_4Fold';
 type RunLog = { at: string; event: string; detail: string };
 type RenderData = { png_url?: string; symmetry?: GeneratorSymmetry; seed?: number; width?: number; height?: number; engine?: string; dots?: number; islands?: number; edges?: number; attempts?: number; decisions?: number; backtracks?: number; propagations?: number };
-type AnalysisAssets = { diagnostic?: string; reconstruction?: string; comparison?: string; svg?: string; result?: string };
-type AnalysisData = { source_url?: string; pipeline_version?: string; status?: string; flags?: string[]; notices?: string[]; dots?: unknown[]; lattice?: { status?: string; residual?: number; occupancy?: number }; topology?: { skeleton?: { endpoints?: number; junctions?: number; connected_components?: number; total_pixels?: number } }; fidelity?: { exact_iou?: number; source_coverage?: number; prediction_precision?: number; stroke_agreement?: number; topology_match?: boolean }; segmentation?: { foreground_fraction?: number; luminance_contrast?: number; binary_likeness?: number }; assets?: AnalysisAssets };
+type AnalysisAssets = { diagnostic?: string; reconstruction?: string; comparison?: string; svg?: string; result?: string; v29_reconstruction?: string; tile_trace?: string };
+type ReconstructionCandidate = { score?: number | null; exact_iou?: number; source_coverage?: number; prediction_precision?: number; stroke_agreement?: number; area_ratio?: number; method?: string; engine_confidence?: number; error?: string };
+type ReconstructionSelection = { metric?: string; selection_threshold?: number; winner?: 'v29_vector' | 'tile_trace' | 'tie'; v29_vector?: ReconstructionCandidate; tile_trace?: ReconstructionCandidate };
+type InputAssessment = { symmetry?: { vertical?: number; horizontal?: number; rotational?: number; best?: number }; lattice?: { detected?: boolean; rows?: number; columns?: number; dots?: number; spacing?: number; regularity?: number }; alternate?: { method?: string; confidence?: number; tile_confidence?: number; cells?: number } };
+type AnalysisData = { source_url?: string; pipeline_version?: string; status?: string; flags?: string[]; notices?: string[]; dots?: unknown[]; lattice?: { status?: string; residual?: number; occupancy?: number }; topology?: { skeleton?: { endpoints?: number; junctions?: number; connected_components?: number; total_pixels?: number } }; fidelity?: { exact_iou?: number; source_coverage?: number; prediction_precision?: number; stroke_agreement?: number; topology_match?: boolean }; segmentation?: { foreground_fraction?: number; luminance_contrast?: number; binary_likeness?: number }; selection?: ReconstructionSelection; input_assessment?: InputAssessment; assets?: AnalysisAssets };
 type ApiResult = AnalysisData & { render?: RenderData; seed?: number };
 type Job = { id: string; status: 'queued' | 'running' | 'complete' | 'failed' | 'cancelled'; stage: string; progress: number; error?: string; logs?: RunLog[]; result?: ApiResult };
 
@@ -54,12 +57,20 @@ function useJob(jobId?: string) {
   useEffect(() => {
     if (!jobId) return;
     let alive = true;
+    let timer: number | undefined;
     const poll = async () => {
-      try { const response = await fetch(`${API}/api/jobs/${jobId}`); const next = (await response.json()) as Job; if (alive) setJob(next); }
-      catch { if (alive) setJob((current) => current ?? { id: jobId, status: 'failed', stage: 'connection failed', progress: 0, error: 'The Kolam service is not reachable.' }); }
+      try {
+        const response = await fetch(`${API}/api/jobs/${jobId}`);
+        if (!response.ok) throw new Error(response.status === 404 ? 'This run belongs to an earlier service session. Start it again.' : 'The Kolam service did not return this run.');
+        const next = (await response.json()) as Job;
+        if (alive) setJob(next);
+      } catch (error) {
+        if (alive) setJob({ id: jobId, status: 'failed', stage: 'run unavailable', progress: 0, error: error instanceof Error ? error.message : 'The Kolam service is not reachable.' });
+        if (timer !== undefined) window.clearInterval(timer);
+      }
     };
-    void poll(); const timer = window.setInterval(poll, 900);
-    return () => { alive = false; window.clearInterval(timer); };
+    void poll(); timer = window.setInterval(poll, 900);
+    return () => { alive = false; if (timer !== undefined) window.clearInterval(timer); };
   }, [jobId]);
   return job;
 }
@@ -125,22 +136,14 @@ function JobStatus({ job, onCancel }: { job?: Job; onCancel?: () => void }) {
   return <div className={`job-status ${job.status}`} role="status" aria-live="polite">{busy ? <LoaderCircle className="spin" size={18} /> : <TriangleAlert size={18} />}<div><strong>{job.stage}</strong><span>{busy ? `${job.progress}% — in progress` : job.error ?? 'The job could not complete.'}</span></div>{busy && onCancel ? <button className="icon-button" onClick={onCancel} aria-label="Cancel current job"><X size={16} /></button> : null}</div>;
 }
 
-function describeLog(event: string) {
-  const value = event.toLowerCase();
-  if (value.includes('queue')) return 'The request is registered and waiting for a worker.';
-  if (value.includes('solve') || value.includes('candidate')) return 'The system is constructing and testing a valid form.';
-  if (value.includes('verify') || value.includes('valid')) return 'The resulting structure is being checked against its rules.';
-  if (value.includes('render')) return 'The verified structure is being prepared for display.';
-  if (value.includes('detect') || value.includes('segment')) return 'The source image is being separated into usable visual evidence.';
-  if (value.includes('lattice') || value.includes('skeleton') || value.includes('path')) return 'The measured dot field and line topology are being recovered.';
-  if (value.includes('reconstruct')) return 'A reconstructed drawing is being produced from the recovered structure.';
-  if (value.includes('complete') || value.includes('finish')) return 'The result and its supporting files are ready.';
-  return 'Recorded by the active process.';
+function logTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? '—' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 function RunLog({ job, label }: { job?: Job; label: string }) {
   if (!job?.logs?.length) return null;
-  return <section className="run-log" aria-label={`${label} live log`}><header><span>{label}</span><small>{job.status === 'complete' ? 'completed run' : 'active run'}</small></header><ol>{job.logs.slice(-12).map((item, index) => <li key={`${item.at}-${index}`}><time>{item.at}</time><div><b>{item.event.replaceAll('_', ' ')}</b><span>{item.detail || describeLog(item.event)}</span><small>{describeLog(item.event)}</small></div></li>)}</ol></section>;
+  return <section className="run-log" aria-label={`${label} live log`}><header><span>{label}</span><small>{job.status === 'complete' ? 'completed run' : 'live record'}</small></header><ol>{job.logs.slice(-12).map((item, index) => <li key={`${item.at}-${index}`}><time dateTime={item.at}>{logTime(item.at)}</time><div><b>{item.event.replaceAll('_', ' ')}</b><span>{item.detail}</span></div></li>)}</ol></section>;
 }
 
 function symmetryGuide(symmetry: GeneratorSymmetry) {
@@ -227,17 +230,38 @@ function Generator() {
   </section>;
 }
 
-type Sample = { id: string; source: string; fallback?: string; label: string };
+type Sample = { id: string; source: string; preview?: string; fallback?: string; label: string };
+type GalleryRecord = { id: string; label?: string; views: { source: string; reconstruction: string } };
 const FALLBACK_SAMPLES: Sample[] = [
+  { id: 'local-001', source: '/samples/kolam_color_001.jpg', label: 'reference image 01' },
   { id: 'local-002', source: '/samples/kolam_color_002.jpg', label: 'reference image 02' },
   { id: 'local-003', source: '/samples/kolam_color_003.jpg', label: 'reference image 03' },
 ];
 
 function formatRatio(value?: number) { return value === undefined ? '—' : (value * 100).toFixed(1) + '%'; }
+
+function formatScore(value?: number) { return typeof value === 'number' ? `${value.toFixed(1)}%` : '—'; }
+
+function SourceAssessment({ assessment }: { assessment?: InputAssessment }) {
+  const symmetry = assessment?.symmetry;
+  if (!symmetry) return null;
+  const axes: Array<[string, number | undefined]> = [
+    ['vertical mirror', symmetry.vertical],
+    ['horizontal mirror', symmetry.horizontal],
+    ['180° rotation', symmetry.rotational],
+  ];
+  const lattice = assessment?.lattice;
+  const alternate = assessment?.alternate;
+  const grid = lattice?.detected ? `${lattice.rows ?? '—'} × ${lattice.columns ?? '—'}` : 'not detected';
+  return <section className="source-assessment"><header><span>source assessment</span><strong>symmetry / lattice</strong></header><div className="symmetry-profile">{axes.map(([label, value]) => <div className="symmetry-row" key={label}><span>{label}</span><i aria-hidden="true"><b style={{ '--symmetry-score': `${Math.max(0, Math.min(100, value ?? 0))}%` } as CSSProperties} /></i><strong>{formatScore(value)}</strong></div>)}</div><div className="source-assessment-grid"><div><small>dot grid</small><b>{grid}</b><em>{lattice?.dots ?? '—'} recovered points</em></div><div><small>grid regularity</small><b>{formatScore(lattice?.regularity)}</b><em>spacing {lattice?.spacing ?? '—'} px</em></div>{alternate?.confidence !== undefined ? <div><small>alternate read</small><b>{formatScore(alternate.confidence)}</b><em>{alternate.method ?? 'trace'} · {alternate.cells ?? 0} cells</em></div> : null}{alternate?.tile_confidence !== undefined ? <div><small>tile evidence</small><b>{formatScore(alternate.tile_confidence)}</b><em>local tile classification</em></div> : null}</div></section>;
+}
+
 function AnalysisLedger({ result }: { result?: AnalysisData }) {
   if (!result) return <section className="analysis-ledger is-empty"><header><span>analysis</span><strong>awaiting image</strong></header><p>Recovered structure, measured qualities, and reference files appear here after analysis.</p></section>;
   const skeleton = result.topology?.skeleton;
-  return <section className="analysis-ledger"><header><span>analysis</span><strong>reconstruction record</strong><i>{result.status?.replace('_', ' ')}</i></header><div className="analysis-metrics"><div><small>lattice</small><b>{result.lattice?.status ?? 'not recovered'}</b><em>residual {result.lattice?.residual?.toFixed(2) ?? '—'}</em></div><div><small>dots</small><b>{result.dots?.length ?? 0}</b><em>occupancy {formatRatio(result.lattice?.occupancy)}</em></div><div><small>topology</small><b>{skeleton?.connected_components ?? '—'} components</b><em>{skeleton?.endpoints ?? '—'} endpoints · {skeleton?.junctions ?? '—'} junctions</em></div><div><small>shape agreement</small><b>{formatRatio(result.fidelity?.stroke_agreement)}</b><em>source coverage {formatRatio(result.fidelity?.source_coverage)}</em></div></div>{result.flags?.length || result.notices?.length ? <div className="analysis-notices">{[...(result.flags ?? []), ...(result.notices ?? [])].slice(0, 5).map((notice) => <span key={notice}>{notice.replaceAll('_', ' ')}</span>)}</div> : null}<div className="analysis-artifacts"><span>files</span>{result.assets?.diagnostic ? <a href={absoluteApiUrl(result.assets.diagnostic)} target="_blank" rel="noreferrer">diagnostic</a> : null}{result.assets?.comparison ? <a href={absoluteApiUrl(result.assets.comparison)} target="_blank" rel="noreferrer">comparison</a> : null}{result.assets?.svg ? <a href={absoluteApiUrl(result.assets.svg)} target="_blank" rel="noreferrer">vector</a> : null}{result.assets?.result ? <a href={absoluteApiUrl(result.assets.result)} target="_blank" rel="noreferrer">result.json</a> : null}</div></section>;
+  const selection = result.selection;
+  const winner = selection?.winner === 'tile_trace' ? 'tile / trace reconstruction' : selection?.winner === 'tie' ? 'outputs are within the selection threshold' : 'vector reconstruction';
+  return <section className="analysis-ledger"><header><span>analysis</span><strong>reconstruction record</strong><i>{result.status?.replace('_', ' ')}</i></header><div className="analysis-metrics"><div><small>lattice</small><b>{result.lattice?.status ?? 'not recovered'}</b><em>residual {result.lattice?.residual?.toFixed(2) ?? '—'}</em></div><div><small>dots</small><b>{result.dots?.length ?? 0}</b><em>occupancy {formatRatio(result.lattice?.occupancy)}</em></div><div><small>topology</small><b>{skeleton?.connected_components ?? '—'} components</b><em>{skeleton?.endpoints ?? '—'} endpoints · {skeleton?.junctions ?? '—'} junctions</em></div><div><small>shape agreement</small><b>{formatRatio(result.fidelity?.stroke_agreement)}</b><em>source coverage {formatRatio(result.fidelity?.source_coverage)}</em></div></div>{selection ? <div className="analysis-selection"><span>output selection</span><strong>{winner}</strong><small>{selection.metric ?? 'comparison unavailable'}</small><div><b>vector <i>{selection.v29_vector?.score?.toFixed(2) ?? '—'}</i></b><b>tile / trace <i>{selection.tile_trace?.score?.toFixed(2) ?? '—'}</i></b></div></div> : null}<SourceAssessment assessment={result.input_assessment} />{result.flags?.length || result.notices?.length ? <div className="analysis-notices">{[...(result.flags ?? []), ...(result.notices ?? [])].slice(0, 5).map((notice) => <span key={notice}>{notice.replaceAll('_', ' ')}</span>)}</div> : null}<div className="analysis-artifacts"><span>files</span>{result.assets?.v29_reconstruction ? <a href={absoluteApiUrl(result.assets.v29_reconstruction)} target="_blank" rel="noreferrer">vector output</a> : null}{result.assets?.tile_trace ? <a href={absoluteApiUrl(result.assets.tile_trace)} target="_blank" rel="noreferrer">tile / trace output</a> : null}{result.assets?.diagnostic ? <a href={absoluteApiUrl(result.assets.diagnostic)} target="_blank" rel="noreferrer">diagnostic</a> : null}{result.assets?.comparison ? <a href={absoluteApiUrl(result.assets.comparison)} target="_blank" rel="noreferrer">comparison</a> : null}{result.assets?.svg ? <a href={absoluteApiUrl(result.assets.svg)} target="_blank" rel="noreferrer">vector</a> : null}{result.assets?.result ? <a href={absoluteApiUrl(result.assets.result)} target="_blank" rel="noreferrer">result.json</a> : null}</div></section>;
 }
 
 function Analyser() {
@@ -256,20 +280,26 @@ function Analyser() {
   const activeDiagnostic = result ? absoluteApiUrl(result.assets?.diagnostic) : undefined;
   const inspectedAsset = lensMode === 'source' ? activeSource : lensMode === 'reconstruction' ? activeRecon : activeDiagnostic;
   useEffect(() => {
-    let live = true;
-    fetch(API + '/api/corpus?limit=80').then((response) => response.ok ? response.json() : undefined).then((payload) => {
-      if (!live || !payload?.records) return;
-      const references = payload.records
-        .filter((record: { id?: string; label?: string; status?: string; views?: { source?: string; reconstruction?: string } }) => record.id && record.views?.source && record.views?.reconstruction)
-        .sort((left: { status?: string }, right: { status?: string }) => Number(right.status === 'auto_pass') - Number(left.status === 'auto_pass'))
+    const controller = new AbortController();
+    fetch(API + '/api/corpus/gallery?limit=25', { signal: controller.signal }).then((response) => response.ok ? response.json() as Promise<{ records?: GalleryRecord[] }> : undefined).then((payload) => {
+      const records = payload?.records;
+      if (!records?.length) return;
+      const references = records
+        .filter((record) => record.id && record.views.source && record.views.reconstruction)
         .slice(0, 25)
-        .map((record: { id: string; label?: string; views: { source: string; reconstruction: string } }) => ({ id: record.id, source: absoluteApiUrl(record.views.source)!, fallback: absoluteApiUrl(record.views.reconstruction), label: record.label ?? 'corpus reference' }));
+        .map((record) => ({
+          id: record.id,
+          source: absoluteApiUrl(record.views.source)!,
+          preview: absoluteApiUrl(record.views.source)!,
+          fallback: absoluteApiUrl(record.views.reconstruction),
+          label: record.label ?? 'corpus reference',
+        }));
       if (references.length) {
         setSamples(references);
         setSelectedSample(references[0]);
       }
     }).catch(() => undefined);
-    return () => { live = false; };
+    return () => controller.abort();
   }, []);
   useEffect(() => () => { if (sourcePreview?.startsWith('blob:')) URL.revokeObjectURL(sourcePreview); }, [sourcePreview]);
   const startAnalysis = async (file?: File, preview?: string) => {
@@ -289,12 +319,14 @@ function Analyser() {
   const startSampleAnalysis = async (sample: Sample) => {
     setSelectedSample(sample);
     setJobId(undefined);
+    setSourcePreview(sample.source);
     try {
-      let response = await fetch(sample.source);
-      if (!response.ok && sample.fallback) response = await fetch(sample.fallback);
-      if (!response.ok) throw new Error('The selected image could not be loaded.');
-      const blob = await response.blob();
-      await startAnalysis(new File([blob], 'reference-' + sample.id + '.webp', { type: blob.type || 'image/webp' }), response.url || sample.source);
+      const response = await fetch(API + '/api/analyses/corpus/' + encodeURIComponent(sample.id), { method: 'POST' });
+      if (!response.ok) throw new Error(await response.text());
+      const started = (await response.json()) as Job;
+      setBlend(0);
+      setLensMode('source');
+      setJobId(started.id);
     } catch (error) { window.alert('Sample could not be analysed: ' + (error instanceof Error ? error.message : 'unknown error')); }
   };
   const onInput = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (file) void startAnalysis(file, URL.createObjectURL(file)); };
@@ -326,7 +358,7 @@ function Analyser() {
     <aside className="analysis-tools">
       <div className="tool-heading"><span>reconstructor</span><strong>input image</strong></div>
       <label className="upload-target" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><strong>drop or choose an image</strong><span>PNG, JPEG, or WebP</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={onInput} /></label>
-      <div className="study-rack sample-carousel"><div><span>reference gallery</span></div><div className="study-list">{samples.map((sample) => <button key={sample.id} className={selectedSample?.id === sample.id && isAnalysing ? 'selected' : ''} onClick={() => void startSampleAnalysis(sample)} aria-label={'Analyse ' + sample.label}><img src={sample.source} alt="" onError={(event) => { if (sample.fallback && event.currentTarget.src !== sample.fallback) event.currentTarget.src = sample.fallback; }} /></button>)}</div></div>
+      <div className="study-rack sample-carousel"><div><span>reference gallery</span></div><div className="study-list">{samples.map((sample) => <button key={sample.id} className={selectedSample?.id === sample.id && isAnalysing ? 'selected' : ''} onClick={() => void startSampleAnalysis(sample)} aria-label={'Analyse ' + sample.label}><img src={sample.preview ?? sample.source} alt="" onError={(event) => { if (sample.fallback && event.currentTarget.src !== sample.fallback) event.currentTarget.src = sample.fallback; }} /></button>)}</div></div>
       <label className="blend-control"><span>comparison divider</span><div className="scrub-rail"><i>original</i><input aria-label="Original to reconstruction scan slider" type="range" min="0" max="100" value={blend} onChange={(event) => setBlend(Number(event.target.value))} /><i>reconstruction</i></div></label>
       <AnalysisLedger result={result} />
       <JobStatus job={job} onCancel={cancel} />
@@ -345,7 +377,7 @@ function Corpus() {
   const [frameIndex, setFrameIndex] = useState(0);
   const reduceMotion = useReducedMotion();
   const pageVisible = usePageVisibility();
-  useEffect(() => { fetch(API + '/api/corpus?limit=600').then((response) => response.ok ? response.json() : undefined).then((payload) => { if (payload?.records) setCorpus(payload.records); }).catch(() => undefined); }, []);
+  useEffect(() => { fetch(API + '/api/corpus?limit=600').then((response) => response.ok ? response.json() as Promise<{ records?: CorpusRecord[] }> : undefined).then((payload) => { if (payload?.records) setCorpus(payload.records); }).catch(() => undefined); }, []);
   useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpened(undefined); }; window.addEventListener('keydown', close); return () => window.removeEventListener('keydown', close); }, []);
   const frames = opened ? [{ key: 'source', label: 'original', url: opened.views.source }, { key: 'reconstruction', label: 'reconstruction', url: opened.views.reconstruction }, { key: 'diagnostic', label: 'diagnostic', url: opened.views.diagnostic }, { key: 'comparison', label: 'comparison', url: opened.views.comparison }] : [];
   useEffect(() => { setFrameIndex(0); }, [opened?.id]);
@@ -411,7 +443,7 @@ const DIAMOND_LATTICE_PATHS = [
   'M 224 278 C 264 298 302 320 340 340 C 378 320 416 298 456 278', 'M 224 402 C 264 382 302 360 340 340 C 378 360 416 382 456 402',
   'M 108 340 C 146 362 184 382 224 402 C 258 374 298 356 340 340', 'M 572 340 C 534 362 496 382 456 402 C 422 374 382 356 340 340',
 ];
-const DIAMOND_LATTICE_DOTS = [[340, 140], [224, 226], [456, 226], [108, 391], [224, 278], [340, 340], [456, 278], [572, 391], [224, 402], [456, 402], [340, 535]];
+const DIAMOND_LATTICE_DOTS: readonly (readonly [number, number])[] = [[340, 140], [224, 226], [456, 226], [108, 391], [224, 278], [340, 340], [456, 278], [572, 391], [224, 402], [456, 402], [340, 535]];
 const EIGHT_POINT_PATHS = [
   'M 340 92 C 304 126 304 178 340 220 C 376 178 376 126 340 92', 'M 340 220 C 292 250 254 282 220 330 C 254 378 292 410 340 440',
   'M 340 440 C 304 482 304 534 340 588 C 376 534 376 482 340 440', 'M 340 220 C 388 250 426 282 460 330 C 426 378 388 410 340 440',
@@ -423,7 +455,7 @@ const EIGHT_POINT_PATHS = [
   'M 460 220 C 492 264 506 310 460 340 C 506 370 492 416 460 460', 'M 340 220 C 310 258 310 296 340 330 C 370 296 370 258 340 220',
   'M 340 350 C 310 384 310 422 340 460 C 370 422 370 384 340 350',
 ];
-const EIGHT_POINT_DOTS = [[340, 148], [220, 220], [340, 220], [460, 220], [148, 340], [220, 340], [340, 340], [460, 340], [532, 340], [220, 460], [340, 460], [460, 460], [340, 532]];
+const EIGHT_POINT_DOTS: readonly (readonly [number, number])[] = [[340, 148], [220, 220], [340, 220], [460, 220], [148, 340], [220, 340], [340, 340], [460, 340], [532, 340], [220, 460], [340, 460], [460, 460], [340, 532]];
 const ARRIVAL_PATTERNS = [
   { id: 'root', source: 'traced reference / root motif', cycleMs: 6600 },
   { id: 'diamond-lattice', source: 'supplied figure / 01', paths: DIAMOND_LATTICE_PATHS, dots: DIAMOND_LATTICE_DOTS, cycleMs: 7600 },

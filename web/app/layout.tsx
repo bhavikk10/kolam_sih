@@ -9,6 +9,7 @@ import './revision.css';
 export const metadata: Metadata = {
   title: 'Kolam — structure in motion',
   description: 'A living interface for analysing and generating kolam structure.',
+  icons: { icon: '/icon.svg' },
 };
 
 export default function RootLayout({
@@ -18,7 +19,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }
